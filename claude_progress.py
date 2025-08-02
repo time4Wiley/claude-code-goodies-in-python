@@ -34,6 +34,7 @@ class ClaudeProgressTracker:
         self.spinner_active = False
         self.spinner_thread: Optional[threading.Thread] = None
         self.last_preview = ""
+        self.collected_content = []  # Collect all content pieces
         
         # Find claude binary
         self.claude_path = self._find_claude_binary()
@@ -151,6 +152,7 @@ class ClaudeProgressTracker:
                             text_content = content_items[0].get('text', '')
                             if text_content:
                                 self.last_preview = self.format_preview(text_content)
+                                self.collected_content.append(text_content)
                     
                     elif msg_type == 'result':
                         # Stop spinner before final output
@@ -158,8 +160,20 @@ class ClaudeProgressTracker:
                         
                         # Extract and print final content
                         content = data.get('content', '')
+                        
+                        # If no content in result, use collected content
+                        if not content and self.collected_content:
+                            content = self.collected_content[-1]  # Use last collected content
+                        
                         if content:
-                            print(content)
+                            # Ensure content is visible by printing it clearly
+                            print("\n" + content)
+                            sys.stdout.flush()  # Force flush to ensure output
+                        else:
+                            # If still no content, show what we collected
+                            if self.collected_content:
+                                print("\n" + self.collected_content[-1])
+                                sys.stdout.flush()
                         
                         # Show summary statistics
                         total_turns = data.get('num_turns', self.turn_count)
@@ -169,10 +183,10 @@ class ClaudeProgressTracker:
                             duration_secs = duration_ms / 1000
                             plural = 's' if total_turns != 1 else ''
                             sys.stderr.write(
-                                f"✓ Done! {total_turns} turn{plural} in {duration_secs:.3f}s\n"
+                                f"\n✓ Done! {total_turns} turn{plural} in {duration_secs:.3f}s\n"
                             )
                         else:
-                            sys.stderr.write("✓ Done!\n")
+                            sys.stderr.write("\n✓ Done!\n")
                         
                 except json.JSONDecodeError:
                     # If not valid JSON, just pass through
