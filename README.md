@@ -1,53 +1,70 @@
-# claude-progress
+# Claude Code Goodies
 
-A lightweight progress tracker for `claude -p` command that shows thinking time, turn counts, and content previews.
+A collection of useful tools for Claude AI, featuring a Typer-based CLI with auto-completion support.
 
 ## Features
+
+### Progress Tracker
+A lightweight progress tracker for `claude -p` command that shows thinking time, turn counts, and content previews.
 
 - 🔄 Animated progress spinner
 - ⏱️ Elapsed time tracking  
 - 🔢 Turn counter
 - 👀 Content preview during thinking
 - 🎯 Clean output
-- 🚀 Zero dependencies - uses only Python standard library
+- 🚀 Built with Typer for modern CLI experience
 
 ## Installation
 
-### Direct Usage (Recommended)
-
-Clone the repository and use the script directly:
-
-```bash
-git clone https://github.com/time4wiley/claude-progress.git
-cd claude-progress
-./claude_progress.py "Your question here"
-```
-
-### Via pip/uv
+### Using pip/uv (Recommended)
 
 ```bash
 # Using pip
-pip install claude-progress
+pip install claude-code-goodies
 
-# Using uv
-uv pip install claude-progress
+# Using uv (faster)
+uv pip install claude-code-goodies
+```
+
+### Development Installation
+
+```bash
+git clone https://github.com/time4wiley/claude-code-goodies-in-python.git
+cd claude-code-goodies-in-python
+uv pip install -e .
 ```
 
 ## Usage
 
-```bash
-# Default usage (uses opus model)
-./claude_progress.py "What is the meaning of life?"
+### Progress Tracker
 
-# No quotes needed for multi-word queries
-./claude_progress.py explain how git rebase works
+```bash
+# Using the full command
+cc-goodies progress "What is the meaning of life?"
+
+# Using the alias (after shell restart)
+cg progress explain how git rebase works
 
 # Override model (default is opus)
-./claude_progress.py --model sonnet "Complex mathematical proof"
+cg progress --model sonnet "Complex mathematical proof"
 
-# All arguments after flags are joined as the query
-./claude_progress.py tell me about quantum computing in simple terms
+# No quotes needed for multi-word queries
+cg progress tell me about quantum computing in simple terms
 ```
+
+### Auto-completion
+
+Enable shell auto-completion:
+
+```bash
+# Install completion for your shell (run in terminal, not through uv)
+cc-goodies --install-completion
+
+# Or using the alias
+cg --install-completion
+```
+
+Note: The shell completion feature requires running from an actual terminal session, not through `uv run`.
 
 ## Configuration
 
@@ -75,9 +92,15 @@ export CLAUDE_PATH=/path/to/your/claude
 4. Shows clean final output
 5. Reports completion statistics
 
-## Integration with Shell
+## Shell Alias
 
-If you're using the App.configs setup, this tool integrates seamlessly with existing `cl` and `cls` aliases when the `-p` flag is used.
+After installation, you can use the `cg` alias (if you've added it to your shell config) for quick access:
+
+```bash
+# Equivalent commands
+cc-goodies progress "your query"
+cg progress "your query"
+```
 
 ## Requirements
 

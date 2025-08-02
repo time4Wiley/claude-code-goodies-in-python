@@ -2,6 +2,9 @@
 requires = ["setuptools>=45", "wheel", "setuptools_scm>=6.2"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["cc_goodies*", "claude_progress_pkg*"]
+
 [project]
 name = "claude-code-goodies"
 version = "0.1.0"
@@ -10,13 +13,12 @@ authors = [
     {name = "sharedsky", email = "your.email@example.com"}
 ]
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 keywords = ["claude", "cli", "progress", "ai", "assistant", "tools", "utilities"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -26,10 +28,13 @@ classifiers = [
     "Topic :: Utilities",
 ]
 requires-python = ">=3.9"
-dependencies = []
+dependencies = [
+    "typer[all]>=0.9.0",
+]
 
 [project.scripts]
 claude-progress = "claude_progress_pkg:main"
+cc-goodies = "cc_goodies.main:app"
 
 [project.urls]
 Homepage = "https://github.com/time4wiley/claude-code-goodies-in-python"
