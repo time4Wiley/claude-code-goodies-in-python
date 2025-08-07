@@ -16,8 +16,9 @@ app = typer.Typer(
 app.command(name="progress", help="Track Claude's thinking progress")(progress_command)
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     version: Optional[bool] = typer.Option(
         None, 
         "--version", 
@@ -38,6 +39,11 @@ def main(
     if version:
         from cc_goodies import __version__
         typer.echo(f"cc-goodies version {__version__}")
+        raise typer.Exit()
+    
+    # Show help if no command is provided
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
         raise typer.Exit()
 
 
