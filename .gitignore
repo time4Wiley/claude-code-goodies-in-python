@@ -42,4 +42,4 @@ env/
 htmlcov/
 
 # uv
-.python-version
+# .python-version  # Unignored to specify project Python environment
