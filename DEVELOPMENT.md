@@ -15,7 +15,7 @@ This project uses a shared UV environment located at `~/.ai-wiley-uv/`. The proj
 
 # Option 2: Activate the environment
 source ~/.ai-wiley-uv/bin/activate
-uv add some-package          # Add dependencies normally
+pip install some-package     # Add dependencies (NOT uv add!)
 python -m pytest             # Run tests
 deactivate                   # When done
 ```
@@ -42,20 +42,25 @@ The `.vscode/settings.json` is already configured to use the correct Python inte
 
 ### Adding Dependencies
 
-1. **Using dev.sh (Recommended for this project)**
+**⚠️ IMPORTANT**: Do NOT use `uv add` in this project - it will create a local .venv!
+
+1. **Using dev.sh (Recommended)**
    ```bash
    ./dev.sh add rich
+   # Then manually add to pyproject.toml dependencies section
    ```
 
 2. **Using activated environment**
    ```bash
    source ~/.ai-wiley-uv/bin/activate
-   uv add rich
+   pip install rich
+   # Then manually add to pyproject.toml dependencies section
    ```
 
-3. **Direct installation**
+3. **If you accidentally run `uv add`**
    ```bash
-   uv pip install --python ~/.ai-wiley-uv/bin/python rich
+   ./dev.sh remove-local-venv  # Cleans up .venv and uv.lock
+   ./dev.sh add package-name   # Install in shared environment
    ```
 
 ### Testing Changes
