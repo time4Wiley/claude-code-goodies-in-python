@@ -6,6 +6,7 @@ from typing import Optional
 from cc_goodies.commands.progress import progress_command
 from cc_goodies.commands.status import status_command
 from cc_goodies.commands.pexpect_test import pexpect_test_command
+from cc_goodies.commands.rename import rename_command
 
 app = typer.Typer(
     name="cc-goodies",
@@ -18,6 +19,7 @@ app = typer.Typer(
 app.command(name="progress", help="Track Claude's thinking progress")(progress_command)
 app.command(name="status", help="Display system status with rich formatting")(status_command)
 app.command(name="pexpect-test", help="Test pexpect functionality")(pexpect_test_command)
+app.command(name="rename", help="Rename Claude Code project and remote repositories")(rename_command)
 
 
 @app.callback(invoke_without_command=True)
