@@ -23,6 +23,15 @@ Claude Code Goodies is a collection of CLI tools for enhancing the Claude AI exp
 
 ## Development Commands
 
+### Environment Setup
+
+**Important**: This project uses the Python interpreter defined in `.python-version` (`/Users/wei/.ai-wiley-uv/bin/python`) instead of a local `.venv` directory.
+
+This is a **shared environment** used by multiple projects. To avoid breaking other projects:
+- **DO NOT use `uv sync`** - it will remove packages from other projects
+- **Use `./dev.sh install`** instead - it safely adds this package without removing others
+- **NEVER run `uv sync`** in this shared environment
+
 ### Running the CLI
 ```bash
 # During development (editable mode via pipx - recommended)
@@ -35,11 +44,17 @@ uv run cc-goodies progress "your query"
 
 ### Installation for Development
 ```bash
-# Recommended: Use pipx for editable installation
+# Safe for shared environment:
+./dev.sh install
+
+# Alternative: Use pipx for editable installation
 ~/App.configs/scripts/install-cc-goodies-pipx.sh
 
 # Alternative: Direct pip install
 pip install -e . --user
+
+# NEVER use this in shared environment (it will remove other packages):
+# uv sync  # ❌ DANGEROUS for shared environments
 ```
 
 ### Building and Publishing
