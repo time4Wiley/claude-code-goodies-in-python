@@ -15,7 +15,7 @@ def progress_command(
     model: Optional[str] = typer.Option(
         "opus",
         "--model", "-m",
-        help="Claude model to use (opus, sonnet, haiku)"
+        help="Claude model to use (e.g., opus, sonnet, haiku, claude-3-5-haiku-20241022)"
     ),
 ):
     """
