@@ -381,6 +381,10 @@ def update_git_remotes(old_name: str, new_name: str, dry_run: bool = False) -> b
 
 
 def rename_command(
+    old_name: Optional[str] = typer.Argument(
+        None,
+        help="Project to rename (path or name). If not provided, uses current directory"
+    ),
     new_name: Optional[str] = typer.Argument(
         None,
         help="New project/repository name"
@@ -452,23 +456,80 @@ def rename_command(
     - Update local git remote URLs
     
     Examples:
-        # Rename to new name in same directory
-        cc-goodies rename my-new-project
+        # From outside: rename specific project
+        cc-goodies rename old-project new-project
+        cc-goodies rename /path/to/old-project new-project
+        
+        # From inside: rename current project
+        cd my-project && cc-goodies rename new-name
         
         # Move project to new path
-        cc-goodies rename --new-path /Users/wei/NewProjects/my-project
+        cc-goodies rename old-project --new-path /Users/wei/NewProjects/my-project
         
         # Preview changes without making them
-        cc-goodies rename --dry-run new-name
+        cc-goodies rename --dry-run old-project new-name
         
         # Only rename Claude project
-        cc-goodies rename new-name --only-claude
+        cc-goodies rename old-project new-name --only-claude
     """
     
-    # Get current directory
-    current_path = os.getcwd()
-    current_dir_name = os.path.basename(current_path)
-    current_parent = os.path.dirname(current_path)
+    # Determine usage pattern: external (2 args) or internal (1 arg)
+    if old_name and new_name:
+        # External usage: cc-goodies rename old new
+        # old_name could be a path or just a name
+        if os.path.isabs(old_name) or os.path.exists(old_name):
+            # It's a path (absolute or relative)
+            current_path = os.path.abspath(old_name)
+        else:
+            # It's just a name - look for it in common project directories
+            # Try current directory's parent first
+            parent_dir = os.path.dirname(os.getcwd())
+            potential_path = os.path.join(parent_dir, old_name)
+            if os.path.exists(potential_path):
+                current_path = potential_path
+            else:
+                # Try common project locations
+                for base in [
+                    "~/Projects",
+                    "~/projects", 
+                    "~/Development",
+                    "~/dev",
+                    "~/code",
+                    "~/src",
+                    "."
+                ]:
+                    base_expanded = os.path.expanduser(base)
+                    potential_path = os.path.join(base_expanded, old_name)
+                    if os.path.exists(potential_path):
+                        current_path = potential_path
+                        break
+                else:
+                    console.print(f"[red]Error: Project '{old_name}' not found[/red]")
+                    console.print("[dim]Searched in current parent directory and common project locations[/dim]")
+                    console.print("[dim]Try using full path instead[/dim]")
+                    raise typer.Exit(1)
+        
+        current_dir_name = os.path.basename(current_path)
+        current_parent = os.path.dirname(current_path)
+        
+        # Verify it's a git repository
+        if not os.path.exists(os.path.join(current_path, ".git")):
+            console.print(f"[yellow]Warning: {current_path} is not a git repository[/yellow]")
+        
+    elif old_name and not new_name:
+        # Internal usage: cc-goodies rename new (only one arg provided)
+        # In this case, old_name is actually the new name
+        new_name = old_name
+        old_name = None
+        current_path = os.getcwd()
+        current_dir_name = os.path.basename(current_path)
+        current_parent = os.path.dirname(current_path)
+    else:
+        # No arguments provided
+        console.print("[red]Error: Must provide project name(s)[/red]")
+        console.print("[dim]Usage: cc-goodies rename old-name new-name   (from anywhere)[/dim]")
+        console.print("[dim]   Or: cc-goodies rename new-name          (from inside project)[/dim]")
+        raise typer.Exit(1)
     
     # Fix mismatch mode: Correct Claude project to match current directory name
     if fix_mismatch:
