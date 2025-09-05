@@ -346,7 +346,8 @@ def mv_command(
         
         # Show helpful cd command
         console.print(f"\n[cyan]To enter the moved project:[/cyan]")
-        console.print(f"[cyan]   cd {final_path}[/cyan]")
+        # Always quote the path for shell safety
+        console.print(f'[cyan]   cd "{final_path}"[/cyan]')
     else:
         console.print(Panel(
             "[yellow]⚠️  Move completed with warnings[/yellow]\n"
