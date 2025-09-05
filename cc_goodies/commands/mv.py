@@ -29,10 +29,13 @@ def path_to_claude_project_name(path: str) -> str:
 def is_claude_managed(path: str) -> bool:
     """Check if a directory is managed by Claude Code.
     
-    A directory is considered Claude-managed if it has a .claude subdirectory.
+    A directory is considered Claude-managed if it has a corresponding
+    entry in ~/.claude/projects/.
     """
-    claude_dir = os.path.join(path, ".claude")
-    return os.path.isdir(claude_dir)
+    claude_projects_dir = os.path.expanduser("~/.claude/projects")
+    project_name = path_to_claude_project_name(path)
+    project_path = os.path.join(claude_projects_dir, project_name)
+    return os.path.isdir(project_path)
 
 
 def check_destination(destination: str) -> str:
@@ -234,7 +237,7 @@ def mv_command(
     
     if not is_claude_managed(source_path):
         console.print(f"[red]Error: Source is not a Claude Code managed project[/red]")
-        console.print(f"[dim]No .claude directory found in: {source_path}[/dim]")
+        console.print(f"[dim]No project entry found in ~/.claude/projects/ for: {source_path}[/dim]")
         if not force:
             console.print(f"[dim]Use --force to move anyway (Claude project mapping won't be updated)[/dim]")
             raise typer.Exit(1)
