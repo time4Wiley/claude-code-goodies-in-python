@@ -9,6 +9,7 @@ from cc_goodies.commands.pexpect_test import pexpect_test_command
 from cc_goodies.commands.rename import rename_command
 from cc_goodies.commands.snapshot import snapshot
 from cc_goodies.commands.mv import mv_command
+from cc_goodies.commands.hooks import hooks_app
 
 app = typer.Typer(
     name="cc-goodies",
@@ -24,6 +25,7 @@ app.command(name="pexpect-test", help="Test pexpect functionality")(pexpect_test
 app.command(name="rename", help="Rename Claude Code project and remote repositories")(rename_command)
 app.command(name="snapshot", help="Generate project snapshot for AI context")(snapshot)
 app.command(name="mv", help="Move Claude Code project to a new location")(mv_command)
+app.add_typer(hooks_app, name="hooks")
 
 
 @app.callback(invoke_without_command=True)
