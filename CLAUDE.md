@@ -99,6 +99,17 @@ The tool searches for the `claude` binary in this order:
 2. Define command function with Typer decorators
 3. Register in `main.py` using `app.command()`
 
+## MCP Server Best Practices
+
+### Using Serena MCP for Efficient File Operations
+When working with this codebase, prefer using Serena MCP server for:
+- **Symbolic code navigation**: Use `find_symbol` and `get_symbols_overview` for understanding code structure
+- **Efficient pattern search**: Use `search_for_pattern` instead of reading entire files
+- **Project-wide analysis**: Use Serena's tools for recursive directory operations
+- **Memory management**: Utilize Serena's memory system for persistent project knowledge
+
+This is especially important for the `mv` and `rename` commands which recursively handle Claude-managed subfolders.
+
 ## Shell Integration
 
 - Shell alias `cg` is configured in `~/App.configs/zsh/zshrc.sh`
