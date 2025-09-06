@@ -27,6 +27,240 @@ def path_to_claude_project_name(path: str) -> str:
     """
     return re.sub(r'[^a-zA-Z0-9]', '-', path)
 
+def find_all_claude_projects(root_path: str) -> list[dict]:
+    """Recursively find all Claude-managed projects within root_path.
+    
+    Args:
+        root_path: Root directory to search within
+        
+    Returns:
+        List of dicts with keys: 'path', 'project_name', 'relative_path'
+        Example: [{'path': '/full/path', 'project_name': '-full-path', 'relative_path': 'subdir'}]
+    """
+    found_projects = []
+    root_path = os.path.abspath(root_path)
+    
+    if not os.path.exists(root_path):
+        return found_projects
+        
+    # Check root directory first
+    claude_projects_dir = os.path.expanduser("~/.claude/projects")
+    project_name = path_to_claude_project_name(root_path)
+    project_path = os.path.join(claude_projects_dir, project_name)
+    
+    if os.path.isdir(project_path):
+        found_projects.append({
+            'path': root_path,
+            'project_name': project_name,
+            'relative_path': '.'
+        })
+    
+    # Recursively check all subdirectories
+    try:
+        for dirpath, dirnames, _ in os.walk(root_path):
+            # Skip the root directory (already checked above)
+            if dirpath == root_path:
+                continue
+                
+            project_name = path_to_claude_project_name(dirpath)
+            project_path = os.path.join(claude_projects_dir, project_name)
+            
+            if os.path.isdir(project_path):
+                relative_path = os.path.relpath(dirpath, root_path)
+                found_projects.append({
+                    'path': dirpath,
+                    'project_name': project_name,
+                    'relative_path': relative_path
+                })
+    except (PermissionError, OSError) as e:
+        console.print(f"[yellow]Warning: Could not scan some directories: {e}[/yellow]")
+    
+    return found_projects
+
+
+def validate_all_project_renames(projects: list[dict], old_root: str, new_root: str, new_name: str = None) -> tuple[bool, list[str]]:
+    """Validate that all project renames can be performed safely.
+    
+    Args:
+        projects: List of project dicts from find_all_claude_projects()
+        old_root: Original root path
+        new_root: New root path (for rename in place) 
+        new_name: New project name (for rename with name change)
+        
+    Returns:
+        Tuple of (success: bool, errors: list[str])
+    """
+    errors = []
+    claude_projects_dir = os.path.expanduser("~/.claude/projects")
+    
+    for project in projects:
+        old_path = project['path']
+        relative_path = project['relative_path']
+        
+        # Calculate new path
+        if relative_path == '.':
+            # Root project - use new_root and new_name if provided
+            if new_name:
+                new_path = os.path.join(os.path.dirname(old_root), new_name)
+            else:
+                new_path = new_root
+        else:
+            # Nested project - maintain relative structure
+            if new_name and old_root in old_path:
+                # Replace old root name with new name in the path
+                old_root_name = os.path.basename(old_root)
+                new_path = old_path.replace(old_root_name, new_name if new_name else old_root_name, 1)
+            else:
+                new_path = os.path.join(new_root, relative_path)
+        
+        old_project_name = path_to_claude_project_name(old_path)
+        new_project_name = path_to_claude_project_name(new_path)
+        
+        old_project_path = os.path.join(claude_projects_dir, old_project_name)
+        new_project_path = os.path.join(claude_projects_dir, new_project_name)
+        
+        # Validate source exists
+        if not os.path.exists(old_project_path):
+            errors.append(f"Source project missing: {old_project_name}")
+            
+        # Validate target doesn't exist (unless it's the same)
+        if os.path.exists(new_project_path) and old_project_path != new_project_path:
+            errors.append(f"Target project already exists: {new_project_name}")
+    
+    return len(errors) == 0, errors
+
+
+def rename_all_claude_projects(old_root: str, new_root: str, new_name: str = None, dry_run: bool = False) -> bool:
+    """Rename all Claude-managed projects within a directory tree.
+    
+    Args:
+        old_root: Original root directory path
+        new_root: New root directory path  
+        new_name: New project name (if renaming root project)
+        dry_run: If True, only preview changes
+        
+    Returns:
+        True if all renames successful, False otherwise
+    """
+    # Find all Claude projects
+    console.print(f"[cyan]Scanning for Claude-managed projects in: {old_root}[/cyan]")
+    
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True
+    ) as progress:
+        task = progress.add_task("Scanning directories...", total=None)
+        projects = find_all_claude_projects(old_root)
+        progress.stop()
+    
+    if not projects:
+        console.print("[yellow]No Claude-managed projects found in directory tree[/yellow]")
+        return True
+    
+    # Show what was found
+    console.print(f"[green]Found {len(projects)} Claude-managed project(s):[/green]")
+    
+    from rich.table import Table
+    from rich import box
+    
+    table = Table(show_header=True, header_style="bold blue", box=box.ROUNDED)
+    table.add_column("Relative Path")
+    table.add_column("Claude Project Name")
+    table.add_column("Action")
+    
+    for project in projects:
+        relative_path = project['relative_path']
+        old_path = project['path']
+        
+        # Calculate new path 
+        if relative_path == '.':
+            # Root project
+            if new_name:
+                new_path = os.path.join(os.path.dirname(old_root), new_name)
+            else:
+                new_path = new_root
+        else:
+            # Nested project - maintain relative structure
+            if new_name and old_root in old_path:
+                old_root_name = os.path.basename(old_root)
+                new_path = old_path.replace(old_root_name, new_name if new_name else old_root_name, 1)
+            else:
+                new_path = os.path.join(new_root, relative_path)
+            
+        new_project_name = path_to_claude_project_name(new_path)
+        
+        if dry_run:
+            action = f"Would rename: {project['project_name']} → {new_project_name}"
+        else:
+            action = f"Rename: {project['project_name']} → {new_project_name}"
+            
+        table.add_row(relative_path, project['project_name'], action)
+    
+    console.print(table)
+    
+    if dry_run:
+        return True
+    
+    # Validate all renames before proceeding  
+    valid, errors = validate_all_project_renames(projects, old_root, new_root, new_name)
+    if not valid:
+        console.print("[red]Cannot proceed with renames due to conflicts:[/red]")
+        for error in errors:
+            console.print(f"  • {error}")
+        return False
+    
+    # Perform all renames
+    claude_projects_dir = os.path.expanduser("~/.claude/projects")
+    successful_renames = []
+    failed_renames = []
+    
+    for project in projects:
+        old_path = project['path']
+        relative_path = project['relative_path']
+        
+        # Calculate new path
+        if relative_path == '.':
+            if new_name:
+                new_path = os.path.join(os.path.dirname(old_root), new_name)
+            else:
+                new_path = new_root
+        else:
+            if new_name and old_root in old_path:
+                old_root_name = os.path.basename(old_root)
+                new_path = old_path.replace(old_root_name, new_name if new_name else old_root_name, 1)
+            else:
+                new_path = os.path.join(new_root, relative_path)
+        
+        old_project_name = path_to_claude_project_name(old_path)
+        new_project_name = path_to_claude_project_name(new_path)
+        
+        old_project_path = os.path.join(claude_projects_dir, old_project_name)
+        new_project_path = os.path.join(claude_projects_dir, new_project_name)
+        
+        try:
+            shutil.move(old_project_path, new_project_path)
+            successful_renames.append(project)
+            console.print(f"[green]✓[/green] Renamed: {relative_path}")
+        except Exception as e:
+            failed_renames.append((project, str(e)))
+            console.print(f"[red]✗[/red] Failed: {relative_path} - {e}")
+    
+    # Summary
+    if successful_renames and not failed_renames:
+        console.print(f"[green]✓ Successfully renamed {len(successful_renames)} Claude project(s)[/green]")
+        return True
+    elif failed_renames:
+        console.print(f"[red]✗ {len(failed_renames)} rename(s) failed[/red]")
+        if successful_renames:
+            console.print(f"[yellow]⚠ {len(successful_renames)} rename(s) succeeded (partial success)[/yellow]")
+        return False
+    
+    return True
+
 
 def load_gogs_config(config_path: str = "~/.gogs-rc") -> Dict[str, str]:
     """Load Gogs configuration from shell script."""
@@ -445,6 +679,11 @@ def rename_command(
         "-f",
         help="Skip confirmation prompts"
     ),
+    recursive: bool = typer.Option(
+        True,
+        "--recursive/--no-recursive",
+        help="Rename all nested Claude projects (default: True)"
+    ),
 ):
     """
     Rename a Claude Code managed project and optionally its remote repositories.
@@ -454,6 +693,7 @@ def rename_command(
     - Rename the repository on GitHub
     - Rename the repository on Gogs
     - Update local git remote URLs
+    - By default, recursively handle all nested Claude-managed projects
     
     Examples:
         # From outside: rename specific project
@@ -466,460 +706,471 @@ def rename_command(
         # Move project to new path
         cc-goodies rename old-project --new-path /Users/wei/NewProjects/my-project
         
+        # Rename only the main project, skip nested ones
+        cc-goodies rename --no-recursive old-project new-name
+        
         # Preview changes without making them
         cc-goodies rename --dry-run old-project new-name
         
         # Only rename Claude project
         cc-goodies rename old-project new-name --only-claude
+        
+        # Only rename remotes
+        cc-goodies rename old-project new-name --only-remotes
+        
+        # Recover from interrupted rename
+        cc-goodies rename --recover old-project new-name --force
+        
+        # Fix mismatched Claude project
+        cc-goodies rename --fix --force
     """
     
-    # Determine usage pattern: external (2 args) or internal (1 arg)
-    if old_name and new_name:
-        # External usage: cc-goodies rename old new
-        # old_name could be a path or just a name
-        if os.path.isabs(old_name) or os.path.exists(old_name):
-            # It's a path (absolute or relative)
-            current_path = os.path.abspath(old_name)
-        else:
-            # It's just a name - look for it in common project directories
-            # Try current directory's parent first
-            parent_dir = os.path.dirname(os.getcwd())
-            potential_path = os.path.join(parent_dir, old_name)
-            if os.path.exists(potential_path):
-                current_path = potential_path
+    import typer
+    from pathlib import Path
+    from typing import Optional
+    
+    # Early validation and argument processing
+    if fix_mismatch and (old_name or new_name or new_path):
+        console.print("[red]Error: --fix cannot be used with other positional arguments[/red]")
+        raise typer.Exit(1)
+    
+    # Parse arguments for different usage patterns
+    if not fix_mismatch:
+        # Standard rename flow
+        cwd = Path.cwd()
+        
+        # Argument parsing - same complex logic as before
+        if old_name and new_name:
+            # External usage: cc-goodies rename old new
+            current_path = old_name if os.path.isabs(old_name) else os.path.abspath(old_name)
+            final_new_name = new_name
+            new_full_path = os.path.join(os.path.dirname(current_path), final_new_name) if not new_path else str(new_path)
+            is_sync_operation = False
+        elif old_name and not new_name:
+            # Internal usage: cc-goodies rename new (only one arg provided)
+            if os.path.exists(old_name):
+                console.print("[yellow]Ambiguous: Is this a source path or new name?[/yellow]")
+                console.print("[dim]  Interpreting as source path. Use quoted names for clarity.[/dim]")
+                current_path = os.path.abspath(old_name)
+                final_new_name = os.path.basename(current_path)
+                new_full_path = current_path
             else:
-                # Try common project locations
-                for base in [
-                    "~/Projects",
-                    "~/projects", 
-                    "~/Development",
-                    "~/dev",
-                    "~/code",
-                    "~/src",
-                    "."
-                ]:
-                    base_expanded = os.path.expanduser(base)
-                    potential_path = os.path.join(base_expanded, old_name)
-                    if os.path.exists(potential_path):
-                        current_path = potential_path
-                        break
-                else:
-                    console.print(f"[red]Error: Project '{old_name}' not found[/red]")
-                    console.print("[dim]Searched in current parent directory and common project locations[/dim]")
-                    console.print("[dim]Try using full path instead[/dim]")
-                    raise typer.Exit(1)
-        
-        current_dir_name = os.path.basename(current_path)
-        current_parent = os.path.dirname(current_path)
-        
-        # Verify it's a git repository
-        if not os.path.exists(os.path.join(current_path, ".git")):
-            console.print(f"[yellow]Warning: {current_path} is not a git repository[/yellow]")
-        
-    elif old_name and not new_name:
-        # Internal usage: cc-goodies rename new (only one arg provided)
-        # In this case, old_name is actually the new name
-        new_name = old_name
-        old_name = None
-        current_path = os.getcwd()
-        current_dir_name = os.path.basename(current_path)
-        current_parent = os.path.dirname(current_path)
-    else:
-        # No arguments provided
-        console.print("[red]Error: Must provide project name(s)[/red]")
-        console.print("[dim]Usage: cc-goodies rename old-name new-name   (from anywhere)[/dim]")
-        console.print("[dim]   Or: cc-goodies rename new-name          (from inside project)[/dim]")
-        raise typer.Exit(1)
-    
-    # Fix mismatch mode: Correct Claude project to match current directory name
-    if fix_mismatch:
-        console.print("[cyan]🔧 Fix mode: Resetting Claude project to match current directory...[/cyan]")
-        claude_projects_dir = os.path.expanduser("~/.claude/projects")
-        
-        # What the Claude project SHOULD be based on current directory
-        correct_claude_name = path_to_claude_project_name(current_path)
-        correct_claude_path = os.path.join(claude_projects_dir, correct_claude_name)
-        
-        # Look for any Claude project that might be a mismatch
-        # (ends with a variation of the current directory name)
-        base_name = current_dir_name.replace('-', '.')  # Handle variations
-        found_mismatch = False
-        
-        for entry in os.listdir(claude_projects_dir):
-            # Check if this might be our project but with wrong name
-            if current_dir_name in entry or base_name in entry:
-                if entry != correct_claude_name:
-                    wrong_path = os.path.join(claude_projects_dir, entry)
-                    console.print(f"[yellow]Found potentially mismatched project:[/yellow]")
-                    console.print(f"  Current: {entry}")
-                    console.print(f"  Should be: {correct_claude_name}")
-                    
-                    if not force and not typer.confirm("\nRename this Claude project to match current directory?"):
-                        continue
-                    
-                    if not dry_run:
-                        try:
-                            if os.path.exists(correct_claude_path):
-                                console.print(f"[red]Target already exists: {correct_claude_name}[/red]")
-                            else:
-                                shutil.move(wrong_path, correct_claude_path)
-                                console.print("[green]✓ Fixed Claude project mapping![/green]")
-                                found_mismatch = True
-                                break
-                        except Exception as e:
-                            console.print(f"[red]Failed to fix: {e}[/red]")
-                    else:
-                        console.print("[cyan]Would rename (dry-run mode)[/cyan]")
-                        found_mismatch = True
-                        break
-        
-        if not found_mismatch:
-            console.print(f"[yellow]No mismatched Claude project found for: {current_dir_name}[/yellow]")
-            console.print(f"[cyan]Expected Claude project name: {correct_claude_name}[/cyan]")
-        
-        raise typer.Exit(0)
-    
-    # Determine new path and name
-    if new_path:
-        # Full new path provided
-        new_full_path = str(new_path.absolute())
-        final_new_name = os.path.basename(new_full_path)
-    elif new_name:
-        # Just new name provided - stay in same parent directory
-        new_full_path = os.path.join(current_parent, new_name)
-        final_new_name = new_name
-    else:
-        console.print("[red]Error: Must provide either new_name or --new-path[/red]")
-        raise typer.Exit(1)
-    
-    # Smart detection: Figure out what the "old" name really is
-    # This handles cases where directory was already renamed but git remotes weren't
-    git_repo_name = get_current_repo_name()
-    
-    # Detect sync scenario: directory already has target name
-    is_sync_operation = (current_dir_name == final_new_name)
-    
-    if is_sync_operation:
-        console.print("[cyan]📍 Sync mode: Directory already has target name, checking other components...[/cyan]")
-        # In sync mode, the "current" name for repos should come from git remotes
-        if git_repo_name and git_repo_name != final_new_name:
-            current_repo_name = git_repo_name
-            console.print(f"  • Git remotes still use old name: {git_repo_name}")
-            console.print(f"  • Will update to match directory: {final_new_name}")
+                # Assume it's a new name for current directory
+                final_new_name = old_name
+                current_path = str(cwd)
+                new_full_path = os.path.join(os.path.dirname(current_path), final_new_name) if not new_path else str(new_path)
+            is_sync_operation = False
+        elif not old_name and not new_name:
+            # No arguments provided - requires --fix
+            console.print("[red]Error: Must provide project name(s) or use --fix[/red]")
+            console.print("[dim]Usage: cc-goodies rename old-name new-name   (from anywhere)[/dim]")
+            console.print("[dim]   Or: cc-goodies rename new-name          (from inside project)[/dim]")
+            console.print("[dim]   Or: cc-goodies rename --fix --force     (fix mismatched mapping)[/dim]")
+            raise typer.Exit(1)
         else:
-            current_repo_name = current_dir_name
-    else:
-        # Normal rename operation
-        current_repo_name = git_repo_name or current_dir_name
+            # new_name provided but no old_name - internal usage
+            final_new_name = new_name
+            current_path = str(cwd)
+            new_full_path = os.path.join(os.path.dirname(current_path), final_new_name) if not new_path else str(new_path)
+            is_sync_operation = False
+
+        # Handle new_path override
+        if new_path:
+            new_full_path = str(new_path)
+            final_new_name = os.path.basename(new_full_path)
+            
+        # Sync detection logic
+        current_dir_name = os.path.basename(current_path)
+        current_repo_name = get_current_repo_name()
+        new_claude_name = path_to_claude_project_name(new_full_path)
         
-        # If the repo name from git already matches the target name, 
-        # it might have been renamed already
-        if current_repo_name == final_new_name:
-            console.print(f"[yellow]Note: Git remotes already use target name: {final_new_name}[/yellow]")
-            current_repo_name = current_dir_name
-    
+        # Check for sync situations
+        if current_repo_name and current_repo_name != current_dir_name and not only_claude:
+            console.print(f"[yellow]Detection: Directory name '{current_dir_name}' != Repository name '{current_repo_name}'[/yellow]")
+            if not new_name:
+                console.print(f"[cyan]Sync mode: Will align directory name with repository name[/cyan]")
+                final_new_name = current_repo_name
+                new_full_path = os.path.join(os.path.dirname(current_path), current_repo_name) if not new_path else str(new_path)
+                is_sync_operation = True
+            
+        # Auto-fix directory vs remote mismatch
+        if current_path != new_full_path and os.path.exists(new_full_path):
+            console.print(f"[cyan]Auto-detection: Directory might be renamed, remotes might not be[/cyan]")
+            
+            if dry_run:
+                console.print("[cyan]Would rename (dry-run mode)[/cyan]")
+                return
+                
+            # This handles cases where directory was already renamed but git remotes weren't
+            # Check if we're already in the renamed directory and just need to sync remotes
+            claude_projects_dir = os.path.expanduser("~/.claude/projects")
+            
+            # Check if Claude project exists for new path
+            if os.path.isdir(os.path.join(claude_projects_dir, path_to_claude_project_name(new_full_path))):
+                console.print(f"[green]Found existing Claude project for target path[/green]")
+                current_path = new_full_path
+                is_sync_operation = True
+            
+        # Normal rename operation
+        old_assumed_path = current_path
+        
+        # Check if the current directory exists - it might have been renamed already
+        if not os.path.exists(current_path):
+            # Directory might have already been renamed but we're still in old location
+            new_full_path = os.path.join(os.path.dirname(current_path), final_new_name) if not new_path else str(new_path)
+            
     # Recovery mode: Check if we're in a partially renamed state
     if recover:
         console.print("[cyan]🔄 Recovery mode: Checking for partial rename...[/cyan]")
         
         # Check if directory was already renamed but we're still in old location
-        if os.path.exists(new_full_path) and not os.path.exists(current_path):
+        if not os.path.exists(current_path) and os.path.exists(new_full_path):
             console.print(f"[yellow]Directory appears to be already renamed to: {new_full_path}[/yellow]")
             console.print(f"[cyan]Switching to renamed directory for remote operations...[/cyan]")
             current_path = new_full_path
-            os.chdir(new_full_path)
-        
-        # Check Claude project status
-        claude_projects_dir = os.path.expanduser("~/.claude/projects")
-        old_claude_name = path_to_claude_project_name(current_path)
-        new_claude_name = path_to_claude_project_name(new_full_path)
-        old_claude_path = os.path.join(claude_projects_dir, old_claude_name)
-        new_claude_path = os.path.join(claude_projects_dir, new_claude_name)
-        
-        if os.path.exists(new_claude_path) and not os.path.exists(old_claude_path):
-            console.print("[green]✓ Claude project already renamed[/green]")
-            only_remotes = True  # Only need to handle remotes
-            rename_claude = False
-    
-    # Override flags if only_claude or only_remotes is set
-    if only_claude:
-        rename_remotes = False
-    if only_remotes:
-        rename_claude = False
-    else:
-        rename_claude = True
-    
-    # In sync mode, we never rename the directory (it's already correct)
-    # We only sync Claude project and remotes to match
-    if is_sync_operation:
-        # Check if Claude project needs syncing
-        claude_projects_dir = os.path.expanduser("~/.claude/projects")
-        expected_claude_name = path_to_claude_project_name(new_full_path)
-        expected_claude_path = os.path.join(claude_projects_dir, expected_claude_name)
-        
-        if os.path.exists(expected_claude_path):
-            console.print(f"  • Claude project already correct")
-            rename_claude = False
-        else:
-            console.print(f"  • Claude project needs syncing")
-            # Try to find the old Claude project based on git repo name or variations
-            if git_repo_name and git_repo_name != final_new_name:
-                # Build the old path using the git repo name
-                old_assumed_path = os.path.join(current_parent, git_repo_name)
-                old_claude_name = path_to_claude_project_name(old_assumed_path)
-                old_claude_path = os.path.join(claude_projects_dir, old_claude_name)
-                
-                if os.path.exists(old_claude_path):
-                    console.print(f"    Found old Claude project: {old_claude_name}")
-                    current_path = old_assumed_path  # Use this for the rename operation
-                else:
-                    console.print(f"    [yellow]Warning: Could not find old Claude project[/yellow]")
-                    rename_claude = False
-    
-    # Auto-detect partial rename even without --recover flag
-    if not recover and rename_claude:
-        claude_projects_dir = os.path.expanduser("~/.claude/projects")
-        old_claude_name = path_to_claude_project_name(current_path)
-        new_claude_name = path_to_claude_project_name(new_full_path)
-        old_claude_path = os.path.join(claude_projects_dir, old_claude_name)
-        new_claude_path = os.path.join(claude_projects_dir, new_claude_name)
-        
-        if not os.path.exists(old_claude_path) and os.path.exists(new_claude_path):
-            console.print("[yellow]⚠️  Detected inconsistent state:[/yellow]")
-            console.print(f"  • Claude project: renamed to {new_claude_name}")
-            console.print(f"  • Directory: still at {current_path}")
+            is_sync_operation = True
             
-            # Check if the actual directory was renamed
-            if not os.path.exists(new_full_path):
-                console.print("[cyan]The directory was NOT renamed. This might be intentional or from an interrupted operation.[/cyan]")
-                console.print("[cyan]The command will update the Claude project to match the current directory.[/cyan]")
+        # Check if Claude project was already renamed
+        claude_projects_dir = os.path.expanduser("~/.claude/projects")
+        old_project_name = path_to_claude_project_name(old_assumed_path)
+        new_project_name = path_to_claude_project_name(new_full_path)
+        old_project_path = os.path.join(claude_projects_dir, old_project_name)
+        new_project_path = os.path.join(claude_projects_dir, new_project_name)
+        
+        if not os.path.exists(old_project_path) and os.path.exists(new_project_path):
+            console.print("[green]✓ Claude project already renamed[/green]")
+            rename_claude = False
+        
+    # Fix mismatch mode
+    if fix_mismatch:
+        rename_remotes = False
+        rename_claude = False
+        
+    if only_remotes:
+        rename_claude = True
+        
+    if only_claude:
+        rename_claude = False
+        
+    # In sync mode, we never rename the directory (it's already correct)
+    if is_sync_operation:
+        rename_directory = False
     
-    # Create summary table
-    table_title = "Sync Operation Summary" if is_sync_operation else "Rename Operation Summary"
-    table = Table(title=table_title, box=box.ROUNDED)
-    table.add_column("Component", style="cyan")
-    table.add_column("Current", style="yellow")
-    table.add_column("New", style="green")
+    # Check if it's a partial rename scenario even without --recover flag
+    if not recover and not fix_mismatch:
+        claude_projects_dir = os.path.expanduser("~/.claude/projects")
+        old_project_name = path_to_claude_project_name(old_assumed_path if 'old_assumed_path' in locals() else current_path)
+        
+        if current_path != new_full_path:
+            new_project_name = path_to_claude_project_name(new_full_path)
+            old_project_path = os.path.join(claude_projects_dir, old_project_name)
+            new_project_path = os.path.join(claude_projects_dir, new_project_name)
+            
+            # If new project already exists, it might be a partial rename
+            if os.path.exists(new_project_path) and not os.path.exists(old_project_path):
+                console.print(f"[cyan]Auto-detection: Claude project appears already renamed[/cyan]")
+                console.print(f"  • Claude project: renamed to {new_claude_name}")
+                
+                # Check if the actual directory was renamed
+                if not os.path.exists(new_full_path):
+                    console.print("[cyan]The directory was NOT renamed. This might be intentional or from an interrupted operation.[/cyan]")
+                    if not force and not typer.confirm("Continue with directory rename only?"):
+                        console.print("[yellow]Operation cancelled[/yellow]")
+                        raise typer.Exit(0)
+                else:
+                    current_path = new_full_path  # Use this for the rename operation
+                    is_sync_operation = True
+                    rename_claude = False
+        
+    # Pre-scan for Claude projects if recursive mode is enabled
+    projects_to_update = []
+    if recursive and not only_remotes and not fix_mismatch:
+        console.print(f"[cyan]Scanning for Claude-managed projects...[/cyan]")
+        projects_to_update = find_all_claude_projects(current_path)
+        
+        if not projects_to_update:
+            console.print(f"[yellow]Warning: No Claude-managed projects found in directory tree[/yellow]")
+            if not force and not only_remotes:
+                console.print(f"[dim]Use --force to proceed anyway, or --no-recursive for single project mode[/dim]")
+                raise typer.Exit(1)
+            else:
+                console.print(f"[yellow]Proceeding anyway (--force used or --only-remotes)[/yellow]")
+                recursive = False
+    elif not recursive or only_remotes or fix_mismatch:
+        # Single project mode or remote-only mode
+        claude_projects_dir = os.path.expanduser("~/.claude/projects")
+        project_name = path_to_claude_project_name(current_path)
+        project_path = os.path.join(claude_projects_dir, project_name)
+        
+        if os.path.isdir(project_path) and not only_remotes and not fix_mismatch:
+            projects_to_update = [{
+                'path': current_path,
+                'project_name': project_name,
+                'relative_path': '.'
+            }]
     
     # Determine if we need to rename the filesystem directory
     rename_directory = not is_sync_operation and not only_remotes and not only_claude and current_path != new_full_path
     
     # Show directory rename first (most important)
     if rename_directory:
-        table.add_row(
-            "Directory",
-            os.path.basename(current_path),
-            os.path.basename(new_full_path)
-        )
-    elif is_sync_operation:
-        table.add_row(
-            "Directory",
-            os.path.basename(current_path),
-            f"{os.path.basename(current_path)} [green](already correct)[/green]"
-        )
+        console.print(f"[cyan]Directory:[/cyan] {current_path} → {new_full_path}")
+        
+        # Check for moving into subdirectory of itself
+        if new_full_path.startswith(current_path + os.sep):
+            console.print(f"[red]Error: Cannot rename directory into its own subdirectory[/red]")
+            raise typer.Exit(1)
+        
+        # Check if target already exists
+        if os.path.exists(new_full_path) and current_path != new_full_path:
+            console.print(f"[red]Error: Target directory already exists: {new_full_path}[/red]")
+            raise typer.Exit(1)
     
-    if rename_claude:
-        # Check if already renamed
-        claude_projects_dir = os.path.expanduser("~/.claude/projects")
-        old_claude_name = path_to_claude_project_name(current_path)
-        new_claude_name = path_to_claude_project_name(new_full_path)
-        old_claude_path = os.path.join(claude_projects_dir, old_claude_name)
-        new_claude_path = os.path.join(claude_projects_dir, new_claude_name)
-        
-        if not os.path.exists(old_claude_path) and os.path.exists(new_claude_path):
-            table.add_row(
-                "Claude Project",
-                path_to_claude_project_name(current_path),
-                f"{path_to_claude_project_name(new_full_path)} [green](already renamed)[/green]"
-            )
-        else:
-            table.add_row(
-                "Claude Project",
-                path_to_claude_project_name(current_path),
-                path_to_claude_project_name(new_full_path)
-            )
+    # Show Claude project rename details
+    if not only_remotes and projects_to_update:
+        if len(projects_to_update) == 1 and projects_to_update[0]['relative_path'] == '.':
+            # Single main project
+            if rename_directory or new_full_path != current_path:
+                console.print(f"[cyan]Claude Project:[/cyan] {projects_to_update[0]['project_name']} → {path_to_claude_project_name(new_full_path)}")
+            else:
+                # Check if already renamed
+                claude_projects_dir = os.path.expanduser("~/.claude/projects")
+                current_project_name = projects_to_update[0]['project_name']
+                new_project_name = path_to_claude_project_name(new_full_path)
+                
+                if current_project_name == new_project_name:
+                    console.print(f"[cyan]Claude Project:[/cyan] {current_project_name} [green](no change needed)[/green]")
+                else:
+                    console.print(
+                        f"[cyan]Claude Project:[/cyan] {current_project_name} → "
+                        f"{path_to_claude_project_name(new_full_path)} [green](already renamed)[/green]"
+                    )
+        elif len(projects_to_update) > 1:
+            # Multiple projects
+            console.print(f"[cyan]Claude Projects:[/cyan] {len(projects_to_update)} project(s) will be renamed recursively")
+    elif not only_remotes and not fix_mismatch:
+        console.print("[yellow]Claude Project: Not managed by Claude Code[/yellow]")
     
-    if rename_remotes:
-        remotes = get_git_remotes()
-        
-        # Only show repos that actually need updating
-        show_github = github and any('github.com' in url for url in remotes.values()) and current_repo_name != final_new_name
-        show_gogs = False
-        
-        if show_github:
-            # Check if it's an org repo or someone else's
-            github_url = next((url for url in remotes.values() if 'github.com' in url), "")
-            is_org_repo = False
-            if github_url:
-                # Extract owner from URL (works for both SSH and HTTPS)
-                import re
-                match = re.search(r'github\.com[:/]([^/]+)/([^/.]+)', github_url)
-                if match:
-                    owner = match.group(1)
-                    # Check if owner is different from user's GitHub username
-                    # (we can't easily check this without an API call, so just flag common org patterns)
-                    if owner != "time4Wiley" and owner != "time4peter":  # Your known usernames
-                        is_org_repo = True
+    # Show remote rename info
+    if rename_remotes and not only_claude:
+        current_repo_name = get_current_repo_name()
+        if current_repo_name and current_repo_name != final_new_name:
+            git_remotes = get_git_remotes()
             
-            if is_org_repo:
-                table.add_row("GitHub Repo", current_repo_name, f"{final_new_name} [yellow](may need manual rename)[/yellow]")
-            else:
-                table.add_row("GitHub Repo", current_repo_name, final_new_name)
-        
-        gogs_config = load_gogs_config()
-        gogs_host = gogs_config.get('GOGS_HOSTNAME', gogs_config.get('GOGS_HOST', ''))
-        if gogs and gogs_host and any(gogs_host in url for url in remotes.values()) and current_repo_name != final_new_name:
-            show_gogs = True
-            table.add_row("Gogs Repo", current_repo_name, final_new_name)
-        
-        # Check if git remotes need updating
-        needs_remote_update = any(
-            current_repo_name in url and current_repo_name != final_new_name
-            for url in remotes.values()
-        )
-        
-        if needs_remote_update:
-            if is_sync_operation:
-                table.add_row("Git Remotes", f"{len(remotes)} remote(s) with '{current_repo_name}'", f"Update to '{final_new_name}'")
-            else:
-                table.add_row("Git Remotes", f"{len(remotes)} remote(s)", "Will be updated")
+            # Show remote info
+            from rich.table import Table
+            from rich import box
+            
+            table = Table(title="Remote Repository Renames", box=box.ROUNDED)
+            table.add_column("Remote", style="cyan")
+            table.add_column("Type", style="blue")
+            table.add_column("Current Name", style="yellow")
+            table.add_column("New Name", style="green")
+            
+            for remote, url in git_remotes.items():
+                if 'github.com' in url:
+                    table.add_row(remote, "GitHub", current_repo_name, final_new_name)
+                elif 'gogs' in url.lower():
+                    table.add_row(remote, "Gogs", current_repo_name, final_new_name)
+                else:
+                    table.add_row(remote, "Other", current_repo_name, f"{final_new_name} [yellow](may need manual rename)[/yellow]")
+            
+            console.print(table)
+        elif not current_repo_name:
+            console.print("[yellow]Remote Repositories: No git repository detected[/yellow]")
     
-    console.print(table)
+    # Show detailed project list if multiple projects found
+    if recursive and len(projects_to_update) > 1:
+        console.print(f"\n[green]Found {len(projects_to_update)} Claude-managed project(s):[/green]")
+        
+        from rich.table import Table
+        from rich import box
+        
+        detail_table = Table(show_header=True, header_style="bold blue", box=box.ROUNDED)
+        detail_table.add_column("Relative Path")
+        detail_table.add_column("Current Project Name", overflow="fold")
+        detail_table.add_column("New Project Name", overflow="fold")
+        
+        for project in projects_to_update:
+            relative_path = project['relative_path']
+            old_path = project['path']
+            
+            # Calculate new path for this project
+            if relative_path == '.':
+                new_path_for_project = new_full_path
+            else:
+                # For nested projects, we need to update their paths based on the rename
+                if rename_directory and final_new_name != os.path.basename(current_path):
+                    # Directory name is changing - update nested project paths
+                    old_root_name = os.path.basename(current_path)
+                    new_path_for_project = old_path.replace(old_root_name, final_new_name, 1)
+                else:
+                    # Directory path is changing but name might be same
+                    new_path_for_project = os.path.join(new_full_path, relative_path)
+                
+            new_project_name = path_to_claude_project_name(new_path_for_project)
+            detail_table.add_row(relative_path, project['project_name'], new_project_name)
+        
+        console.print(detail_table)
     
+    # Dry run indicator
     if dry_run:
         console.print("\n[cyan]DRY RUN MODE - No changes will be made[/cyan]")
     
-    # Confirmation
-    if not dry_run and not force:
-        if not typer.confirm("\nProceed with rename operation?"):
+    # Confirmation prompt
+    if not dry_run and not force and (rename_directory or projects_to_update or rename_remotes):
+        confirmation_msg = "\nProceed with rename operation?"
+        if len(projects_to_update) > 1:
+            confirmation_msg = f"\nProceed with rename operation (will rename {len(projects_to_update)} Claude projects)?"
+        
+        if not typer.confirm(confirmation_msg):
             console.print("[yellow]Operation cancelled[/yellow]")
             raise typer.Exit(0)
     
-    # Perform operations
-    console.print()
-    success = True
+    # === EXECUTION PHASE ===
     
-    # Save original directory for later restoration
-    original_cwd = os.getcwd()
-    should_change_dir = False
+    console.print()
+    overall_success = True
     
     # Determine if we need to rename the filesystem directory
     rename_directory = not is_sync_operation and not only_remotes and not only_claude and current_path != new_full_path
     
-    # If we're renaming the directory and not in dry-run mode, we need to change to parent directory
+    # Important: Change to parent directory before renaming the current directory
     # to avoid issues with the current directory being renamed
     if rename_directory and not dry_run and not new_path:
-        # Only change to parent if we're renaming in the same parent directory
-        should_change_dir = True
+        parent_dir = os.path.dirname(current_path)
         try:
-            os.chdir(current_parent)
+            os.chdir(parent_dir)
+            console.print(f"[dim]Changed to parent directory: {parent_dir}[/dim]")
         except Exception as e:
             console.print(f"[yellow]Warning: Could not change to parent directory: {e}[/yellow]")
-            should_change_dir = False
     
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        transient=True,
-    ) as progress:
+    # Execute operations in order
+    
+    # 1. Rename filesystem directory first
+    if rename_directory:
+        console.print("[cyan]📁 Renaming directory...[/cyan]")
+        result = rename_filesystem_directory(current_path, new_full_path, dry_run)
+        if not result:
+            overall_success = False
+            console.print("[red]Failed to rename directory. Stopping operation.[/red]")
+            raise typer.Exit(1)
+            # Don't continue if directory rename failed
+    
+    # 2. Rename Claude projects (recursive or single)
+    if not only_remotes and projects_to_update:
+        console.print("[cyan]🧠 Renaming Claude projects...[/cyan]")
         
-        # FIRST: Rename the actual filesystem directory (if needed)
-        if rename_directory:
-            task = progress.add_task("Renaming directory...", total=None)
-            result = rename_filesystem_directory(current_path, new_full_path, dry_run)
-            if not result:
-                success = False
-                console.print("[red]Failed to rename directory. Stopping operation.[/red]")
-                progress.update(task, completed=True)
-                # Don't continue if directory rename failed
-                if not dry_run:
-                    raise typer.Exit(1)
-            progress.update(task, completed=True)
-        
-        # SECOND: Rename Claude project to match new directory
-        if rename_claude:
-            task = progress.add_task("Renaming Claude project...", total=None)
+        if recursive and len(projects_to_update) > 1:
+            # Use recursive rename function
+            result = rename_all_claude_projects(
+                current_path, 
+                new_full_path, 
+                final_new_name if rename_directory else None,
+                dry_run
+            )
+        elif len(projects_to_update) == 1:
+            # Use single project rename function
             # Pass check_reverse=True to handle already-renamed cases
             result = rename_claude_project(current_path, new_full_path, dry_run, check_reverse=True)
-            if not result:
-                success = False
-            progress.update(task, completed=True)
-        
-        # THIRD: Rename remote repositories and update git remotes
-        if rename_remotes and current_repo_name != final_new_name:
-            # Get remotes before potential directory rename
-            remotes = get_git_remotes()
+        else:
+            result = True
             
-            # After renaming directory, we need to work from the new directory location
+        if not result:
+            overall_success = False
+            console.print("[yellow]Warning: Claude project rename failed[/yellow]")
+    
+    # 3. Rename remote repositories
+    if rename_remotes and current_repo_name != final_new_name and not only_claude:
+        # Get remotes before potential directory rename
+        git_remotes = get_git_remotes()
+        
+        if git_remotes:
+            console.print("[cyan]🌐 Renaming remote repositories...[/cyan]")
+            
+            # Determine working directory for git operations
             git_work_dir = new_full_path if (rename_directory and not dry_run and os.path.exists(new_full_path)) else current_path
             
-            # Temporarily change to the git directory for remote operations
-            saved_dir = os.getcwd()
-            try:
+            # GitHub rename
+            if github and any('github.com' in url for url in git_remotes.values()):
+                console.print("[dim]  Renaming GitHub repository...[/dim]")
+                
+                # Change to the correct directory for git operations
+                original_cwd = os.getcwd()
                 if os.path.exists(git_work_dir):
                     os.chdir(git_work_dir)
                 
-                # Rename on GitHub
-                if github and any('github.com' in url for url in remotes.values()):
-                    task = progress.add_task("Renaming GitHub repository...", total=None)
+                try:
                     if not rename_github_repo(current_repo_name, final_new_name, dry_run, skip_github_check):
-                        success = False
-                    progress.update(task, completed=True)
-                
-                # Rename on Gogs
-                if gogs and gogs_host and any(gogs_host in url for url in remotes.values()):
-                    task = progress.add_task("Renaming Gogs repository...", total=None)
-                    if not rename_gogs_repo(current_repo_name, final_new_name, dry_run):
-                        success = False
-                    progress.update(task, completed=True)
-                
-                # Update git remotes
-                if remotes:
-                    task = progress.add_task("Updating git remotes...", total=None)
-                    update_git_remotes(current_repo_name, final_new_name, dry_run)
-                    progress.update(task, completed=True)
+                        overall_success = False
+                        console.print("[yellow]Warning: GitHub repository rename failed[/yellow]")
+                finally:
+                    os.chdir(original_cwd)
+            
+            # Gogs rename  
+            if gogs and any('gogs' in url.lower() for url in git_remotes.values()):
+                console.print("[dim]  Renaming Gogs repository...[/dim]")
+                if not rename_gogs_repo(current_repo_name, final_new_name, dry_run):
+                    overall_success = False
+                    console.print("[yellow]Warning: Gogs repository rename failed[/yellow]")
+            
+            # Update git remote URLs
+            console.print("[dim]  Updating git remote URLs...[/dim]")
+            
+            # Change to the correct directory for git operations
+            original_cwd = os.getcwd()
+            if os.path.exists(git_work_dir):
+                os.chdir(git_work_dir)
+            
+            try:
+                update_git_remotes(current_repo_name, final_new_name, dry_run)
             finally:
-                # Always restore the directory
-                os.chdir(saved_dir)
+                os.chdir(original_cwd)
     
     # Note about directory change - only if the directory actually exists and was renamed
-    if should_change_dir and success and not dry_run and os.path.exists(new_full_path):
+    if rename_directory and os.path.exists(new_full_path):
         console.print(f"\n[cyan]ℹ️  Note: Your project directory has been renamed. To enter the renamed directory:[/cyan]")
-        console.print(f"[cyan]   cd {new_full_path}[/cyan]")
-    elif should_change_dir and success and not dry_run and not os.path.exists(new_full_path):
+        console.print(f'[cyan]   cd "{new_full_path}"[/cyan]')
+    elif not rename_directory and current_path != new_full_path:
         # Directory wasn't actually renamed (maybe only Claude project was)
         console.print(f"\n[yellow]⚠️  Note: The directory was not renamed (still at current location).[/yellow]")
-        if rename_claude:
-            console.print(f"[yellow]   The Claude project mapping was updated but the directory remains: {current_path}[/yellow]")
-    elif is_sync_operation and success and not dry_run:
-        console.print(f"\n[green]✓ All components synced to: {final_new_name}[/green]")
+        if projects_to_update:
+            console.print(f"[dim]Claude project mappings have been updated to reflect the new structure.[/dim]")
     
     # Final status
     console.print()
+    
     if dry_run:
+        from rich.panel import Panel
+        from rich import box
+        
         console.print(Panel(
             "[cyan]Dry run completed. Review the changes above.[/cyan]",
             border_style="cyan",
             box=box.DOUBLE
         ))
-    elif success:
-        if is_sync_operation:
-            console.print(Panel(
-                f"[bold green]✨ Successfully synced project![/bold green]\n"
-                f"[dim]All components now match: {final_new_name}[/dim]",
-                border_style="green",
-                box=box.DOUBLE
-            ))
-        else:
-            console.print(Panel(
-                f"[bold green]✨ Successfully renamed project![/bold green]\n"
-                f"[dim]Claude project and remotes have been updated.[/dim]",
-                border_style="green",
-                box=box.DOUBLE
-            ))
-    else:
+    elif overall_success:
+        from rich.panel import Panel
+        from rich import box
+        
+        success_msg = f"[bold green]✨ Successfully renamed project![/bold green]\n"
+        if len(projects_to_update) > 1:
+            success_msg += f"[dim]Renamed {len(projects_to_update)} Claude project(s)[/dim]\n"
+        success_msg += f"[dim]New name: {final_new_name}[/dim]"
+        if rename_directory:
+            success_msg += f"\n[dim]New location: {new_full_path}[/dim]"
+            
         console.print(Panel(
-            "[yellow]⚠️  Rename completed with some warnings[/yellow]\n"
+            success_msg,
+            border_style="green",
+            box=box.DOUBLE
+        ))
+    else:
+        from rich.panel import Panel
+        from rich import box
+        
+        console.print(Panel(
+            "[yellow]⚠️  Rename completed with some failures[/yellow]\n"
             "[dim]Check the messages above for details.[/dim]",
             border_style="yellow",
             box=box.DOUBLE
