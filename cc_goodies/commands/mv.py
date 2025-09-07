@@ -26,6 +26,171 @@ def path_to_claude_project_name(path: str) -> str:
     return re.sub(r'[^a-zA-Z0-9]', '-', path)
 
 
+def merge_claude_sessions(source_project_dir: str, target_project_dir: str, dry_run: bool = False) -> tuple[bool, int]:
+    """Merge session files from source Claude project to target Claude project.
+    
+    Args:
+        source_project_dir: Source Claude project directory (full path)
+        target_project_dir: Target Claude project directory (full path)
+        dry_run: If True, only preview what would be merged
+        
+    Returns:
+        Tuple of (success: bool, session_count: int)
+    """
+    if not os.path.exists(source_project_dir):
+        console.print(f"[yellow]Source project directory not found: {source_project_dir}[/yellow]")
+        return False, 0
+    
+    if not os.path.exists(target_project_dir):
+        console.print(f"[yellow]Target project directory not found: {target_project_dir}[/yellow]")
+        return False, 0
+    
+    # Find all .jsonl session files in source
+    session_files = []
+    try:
+        for file in os.listdir(source_project_dir):
+            if file.endswith('.jsonl'):
+                session_files.append(file)
+    except OSError as e:
+        console.print(f"[red]Error reading source project directory: {e}[/red]")
+        return False, 0
+    
+    if not session_files:
+        console.print(f"[yellow]No session files found in source project[/yellow]")
+        return True, 0
+    
+    console.print(f"[cyan]Found {len(session_files)} session file(s) to merge[/cyan]")
+    
+    merged_count = 0
+    failed_files = []
+    
+    for session_file in session_files:
+        source_file = os.path.join(source_project_dir, session_file)
+        target_file = os.path.join(target_project_dir, session_file)
+        
+        # Check if session already exists in target
+        if os.path.exists(target_file):
+            # Compare file sizes to check if they're the same
+            source_size = os.path.getsize(source_file)
+            target_size = os.path.getsize(target_file)
+            
+            if source_size == target_size:
+                console.print(f"[dim]  • {session_file}: Already exists (same size), skipping[/dim]")
+                continue
+            else:
+                # Rename the source file to avoid collision
+                base_name = session_file[:-6]  # Remove .jsonl
+                new_name = f"{base_name}_merged_{int(os.path.getmtime(source_file))}.jsonl"
+                target_file = os.path.join(target_project_dir, new_name)
+                console.print(f"[yellow]  • {session_file}: Exists with different size, renaming to {new_name}[/yellow]")
+        
+        if dry_run:
+            console.print(f"[cyan]  • Would merge: {session_file}[/cyan]")
+            merged_count += 1
+        else:
+            try:
+                shutil.copy2(source_file, target_file)
+                console.print(f"[green]  • Merged: {session_file}[/green]")
+                merged_count += 1
+            except Exception as e:
+                console.print(f"[red]  • Failed to merge {session_file}: {e}[/red]")
+                failed_files.append(session_file)
+    
+    if failed_files:
+        console.print(f"[red]Failed to merge {len(failed_files)} file(s)[/red]")
+        return False, merged_count
+    
+    return True, merged_count
+
+
+def handle_recovery_scenario(source_path: str, destination_path: str, dry_run: bool = False) -> bool:
+    """Handle the case where directory was renamed externally but Claude project wasn't updated.
+    
+    This handles:
+    1. Source directory doesn't exist but source Claude project does
+    2. Destination directory exists (renamed externally)
+    3. Merges sessions if destination Claude project exists, otherwise moves the project
+    
+    Args:
+        source_path: Original directory path (doesn't exist)
+        destination_path: New directory path (exists)
+        dry_run: If True, only preview changes
+        
+    Returns:
+        True if recovery successful, False otherwise
+    """
+    claude_projects_dir = os.path.expanduser("~/.claude/projects")
+    
+    source_project_name = path_to_claude_project_name(source_path)
+    dest_project_name = path_to_claude_project_name(destination_path)
+    
+    source_project_dir = os.path.join(claude_projects_dir, source_project_name)
+    dest_project_dir = os.path.join(claude_projects_dir, dest_project_name)
+    
+    # Verify recovery scenario conditions
+    if os.path.exists(source_path):
+        console.print(f"[yellow]Source directory exists, not a recovery scenario[/yellow]")
+        return False
+    
+    if not os.path.exists(destination_path):
+        console.print(f"[red]Destination directory does not exist: {destination_path}[/red]")
+        return False
+    
+    if not os.path.exists(source_project_dir):
+        console.print(f"[red]Source Claude project not found: {source_project_name}[/red]")
+        console.print(f"[dim]This directory may not have been managed by Claude Code[/dim]")
+        return False
+    
+    console.print(f"[cyan]🔄 Recovery scenario detected:[/cyan]")
+    console.print(f"  • Directory was renamed: {source_path} → {destination_path}")
+    console.print(f"  • Claude project needs update: {source_project_name} → {dest_project_name}")
+    
+    # Check if destination Claude project exists
+    if os.path.exists(dest_project_dir):
+        console.print(f"[yellow]⚠️  Target Claude project already exists[/yellow]")
+        console.print(f"[cyan]Will merge sessions from old project to new project[/cyan]")
+        
+        if dry_run:
+            console.print(f"[cyan]Would merge sessions from {source_project_name} to {dest_project_name}[/cyan]")
+            _, session_count = merge_claude_sessions(source_project_dir, dest_project_dir, dry_run=True)
+            console.print(f"[cyan]Would then remove old Claude project: {source_project_name}[/cyan]")
+            return True
+        
+        # Merge sessions
+        success, merged_count = merge_claude_sessions(source_project_dir, dest_project_dir, dry_run=False)
+        
+        if success:
+            console.print(f"[green]✓ Successfully merged {merged_count} session(s)[/green]")
+            
+            # Remove the old Claude project directory
+            try:
+                shutil.rmtree(source_project_dir)
+                console.print(f"[green]✓ Removed old Claude project: {source_project_name}[/green]")
+                return True
+            except Exception as e:
+                console.print(f"[red]Failed to remove old Claude project: {e}[/red]")
+                console.print(f"[yellow]Sessions were merged but old project remains[/yellow]")
+                return False
+        else:
+            console.print(f"[red]Session merge failed[/red]")
+            return False
+    else:
+        # Destination Claude project doesn't exist, just move the source project
+        console.print(f"[cyan]Target Claude project doesn't exist, will move the project[/cyan]")
+        
+        if dry_run:
+            console.print(f"[cyan]Would move Claude project: {source_project_name} → {dest_project_name}[/cyan]")
+            return True
+        
+        try:
+            shutil.move(source_project_dir, dest_project_dir)
+            console.print(f"[green]✓ Claude project moved successfully[/green]")
+            return True
+        except Exception as e:
+            console.print(f"[red]Failed to move Claude project: {e}[/red]")
+            return False
+
+
 def is_claude_managed(path: str) -> bool:
     """Check if a directory is managed by Claude Code.
     
@@ -82,8 +247,10 @@ def find_all_claude_projects(root_path: str) -> list[dict]:
     return found_projects
 
 
-def validate_all_project_updates(projects: list[dict], old_root: str, new_root: str) -> tuple[bool, list[str]]:
+def validate_all_project_updates(projects: list[dict], old_root: str, new_root: str) -> tuple[bool, list[str], list[str]]:
     """Validate that all project updates can be performed safely.
+    
+    Now allows merging when target exists, so returns info about what will be merged.
     
     Args:
         projects: List of project dicts from find_all_claude_projects()
@@ -91,9 +258,10 @@ def validate_all_project_updates(projects: list[dict], old_root: str, new_root: 
         new_root: New root path
         
     Returns:
-        Tuple of (success: bool, errors: list[str])
+        Tuple of (success: bool, errors: list[str], merge_info: list[str])
     """
     errors = []
+    merge_info = []
     claude_projects_dir = os.path.expanduser("~/.claude/projects")
     
     for project in projects:
@@ -116,11 +284,11 @@ def validate_all_project_updates(projects: list[dict], old_root: str, new_root: 
         if not os.path.exists(old_project_path):
             errors.append(f"Source project missing: {old_project_name}")
             
-        # Validate target doesn't exist (unless it's the same)
+        # Check if target exists - now we allow merging
         if os.path.exists(new_project_path) and old_project_path != new_project_path:
-            errors.append(f"Target project already exists: {new_project_name}")
+            merge_info.append(f"Will merge: {old_project_name} → {new_project_name}")
     
-    return len(errors) == 0, errors
+    return len(errors) == 0, errors, merge_info
 
 
 def update_all_claude_projects(old_root: str, new_root: str, dry_run: bool = False) -> bool:
@@ -184,17 +352,24 @@ def update_all_claude_projects(old_root: str, new_root: str, dry_run: bool = Fal
         return True
     
     # Validate all updates before proceeding  
-    valid, errors = validate_all_project_updates(projects, old_root, new_root)
+    valid, errors, merge_info = validate_all_project_updates(projects, old_root, new_root)
     if not valid:
         console.print("[red]Cannot proceed with updates due to conflicts:[/red]")
         for error in errors:
             console.print(f"  • {error}")
         return False
     
+    # Show merge info if any
+    if merge_info:
+        console.print("[yellow]Some target projects exist - will merge sessions:[/yellow]")
+        for info in merge_info:
+            console.print(f"  • {info}")
+    
     # Perform all updates
     claude_projects_dir = os.path.expanduser("~/.claude/projects")
     successful_updates = []
     failed_updates = []
+    merged_projects = []
     
     for project in projects:
         old_path = project['path']
@@ -213,16 +388,39 @@ def update_all_claude_projects(old_root: str, new_root: str, dry_run: bool = Fal
         new_project_path = os.path.join(claude_projects_dir, new_project_name)
         
         try:
-            shutil.move(old_project_path, new_project_path)
-            successful_updates.append(project)
-            console.print(f"[green]✓[/green] Updated: {relative_path}")
+            # Check if target exists - if so, merge instead of move
+            if os.path.exists(new_project_path) and old_project_path != new_project_path:
+                # Merge sessions
+                success, merged_count = merge_claude_sessions(old_project_path, new_project_path, dry_run=False)
+                if success:
+                    merged_projects.append((project, merged_count))
+                    # Remove source after successful merge
+                    try:
+                        shutil.rmtree(old_project_path)
+                        console.print(f"[green]✓[/green] Merged: {relative_path} ({merged_count} sessions)")
+                    except Exception as e:
+                        console.print(f"[yellow]⚠[/yellow] Merged but couldn't remove source: {relative_path}")
+                    successful_updates.append(project)
+                else:
+                    failed_updates.append((project, "Session merge failed"))
+                    console.print(f"[red]✗[/red] Failed to merge: {relative_path}")
+            else:
+                # Simple move
+                shutil.move(old_project_path, new_project_path)
+                successful_updates.append(project)
+                console.print(f"[green]✓[/green] Updated: {relative_path}")
         except Exception as e:
             failed_updates.append((project, str(e)))
             console.print(f"[red]✗[/red] Failed: {relative_path} - {e}")
     
     # Summary
     if successful_updates and not failed_updates:
-        console.print(f"[green]✓ Successfully updated {len(successful_updates)} Claude project(s)[/green]")
+        if merged_projects:
+            total_sessions = sum(count for _, count in merged_projects)
+            console.print(f"[green]✓ Successfully updated {len(successful_updates)} Claude project(s)[/green]")
+            console.print(f"[green]  • {len(merged_projects)} project(s) merged ({total_sessions} total sessions)[/green]")
+        else:
+            console.print(f"[green]✓ Successfully updated {len(successful_updates)} Claude project(s)[/green]")
         return True
     elif failed_updates:
         console.print(f"[red]✗ {len(failed_updates)} update(s) failed[/red]")
@@ -577,6 +775,8 @@ def move_filesystem_directory(source: str, destination: str, dry_run: bool = Fal
 def update_claude_project(old_path: str, new_path: str, dry_run: bool = False) -> bool:
     """Update Claude Code project mapping to reflect new location.
     
+    If target Claude project already exists, merges sessions from source to target.
+    
     Args:
         old_path: Original project path
         new_path: New project path
@@ -604,9 +804,40 @@ def update_claude_project(old_path: str, new_path: str, dry_run: bool = False) -
         if old_project_path == new_project_path:
             console.print(f"[yellow]Claude project already has correct mapping[/yellow]")
             return True
-        console.print(f"[red]Target Claude project already exists: {new_project_name}[/red]")
-        return False
+        
+        # Target exists - merge sessions instead of failing
+        console.print(f"[yellow]Target Claude project already exists: {new_project_name}[/yellow]")
+        console.print(f"[cyan]Will merge sessions from source to target[/cyan]")
+        
+        if dry_run:
+            console.print(f"[cyan]Would merge Claude sessions:[/cyan]")
+            console.print(f"  From: {old_project_name}")
+            console.print(f"  To:   {new_project_name}")
+            _, session_count = merge_claude_sessions(old_project_path, new_project_path, dry_run=True)
+            console.print(f"[cyan]Would then remove source project: {old_project_name}[/cyan]")
+            return True
+        
+        # Perform the merge
+        success, merged_count = merge_claude_sessions(old_project_path, new_project_path, dry_run=False)
+        
+        if success:
+            if merged_count > 0:
+                console.print(f"[green]✓ Merged {merged_count} session(s) to target project[/green]")
+            
+            # Remove the source Claude project after successful merge
+            try:
+                shutil.rmtree(old_project_path)
+                console.print(f"[green]✓ Removed source Claude project: {old_project_name}[/green]")
+                return True
+            except Exception as e:
+                console.print(f"[yellow]Warning: Failed to remove source project: {e}[/yellow]")
+                console.print(f"[dim]Sessions were merged but source project remains[/dim]")
+                return True  # Still consider it successful since merge worked
+        else:
+            console.print(f"[red]Failed to merge Claude sessions[/red]")
+            return False
     
+    # Target doesn't exist - simple move
     if dry_run:
         console.print(f"[cyan]Would update Claude project mapping:[/cyan]")
         console.print(f"  From: {old_project_name}")
@@ -652,12 +883,23 @@ def mv_command(
         "--recursive/--no-recursive",
         help="Update all nested Claude projects (default: True)"
     ),
+    recover: bool = typer.Option(
+        False,
+        "--recover",
+        help="Recover from externally renamed directory (auto-detected)"
+    ),
 ):
     """
     Move a Claude Code managed project to a new location.
     
     This command moves a project directory and updates its Claude Code project mapping.
     By default, it recursively handles all nested Claude-managed projects within the source.
+    
+    Recovery Mode:
+    Automatically detects when a directory was renamed externally but the Claude project
+    wasn't updated. In this case, it will:
+    - Move the orphaned Claude project if destination doesn't have one
+    - Merge session files if destination already has a Claude project
     
     Behavior based on destination:
     - If destination exists as a directory: moves source into it
@@ -671,6 +913,12 @@ def mv_command(
         # Move and rename in one operation
         cc-goodies mv old-project /Users/wei/Projects/new-project
         
+        # Recover after external rename (auto-detected)
+        cc-goodies mv old-name new-name  # If old-name doesn't exist but Claude project does
+        
+        # Force recovery mode explicitly
+        cc-goodies mv --recover old-name new-name
+        
         # Move only the main project, skip nested ones
         cc-goodies mv --no-recursive my-project ../other-location/
         
@@ -682,7 +930,91 @@ def mv_command(
     source_path = os.path.abspath(source)
     destination_path = os.path.abspath(destination)
     
-    # Validate source
+    # Check for recovery scenario first
+    claude_projects_dir = os.path.expanduser("~/.claude/projects")
+    source_project_name = path_to_claude_project_name(source_path)
+    source_project_dir = os.path.join(claude_projects_dir, source_project_name)
+    
+    # Recovery scenario: source doesn't exist but Claude project does (or --recover flag)
+    if (not os.path.exists(source_path) and os.path.exists(source_project_dir)) or recover:
+        if recover and os.path.exists(source_path):
+            console.print(f"[yellow]⚠️  Recovery mode forced with --recover flag[/yellow]")
+        else:
+            console.print(f"[yellow]⚠️  Source directory not found, but Claude project exists[/yellow]")
+        console.print(f"[cyan]Checking if this is a recovery scenario...[/cyan]")
+        
+        # Check if destination might be the renamed directory
+        if os.path.exists(destination_path) and os.path.isdir(destination_path):
+            console.print(f"[cyan]🔄 Recovery mode: Directory appears to have been renamed externally[/cyan]")
+            
+            # Show what will happen
+            table = Table(title="Recovery Operation", box=box.ROUNDED)
+            table.add_column("Component", style="cyan")
+            table.add_column("Status", style="yellow")
+            table.add_column("Action", style="green")
+            
+            table.add_row(
+                "Directory",
+                f"{source_path} (not found)",
+                f"Already at {destination_path}"
+            )
+            
+            dest_project_name = path_to_claude_project_name(destination_path)
+            dest_project_dir = os.path.join(claude_projects_dir, dest_project_name)
+            
+            if os.path.exists(dest_project_dir):
+                table.add_row(
+                    "Claude Project",
+                    f"{source_project_name} (orphaned)",
+                    f"Merge sessions to {dest_project_name}"
+                )
+            else:
+                table.add_row(
+                    "Claude Project",
+                    f"{source_project_name} (orphaned)",
+                    f"Move to {dest_project_name}"
+                )
+            
+            console.print(table)
+            
+            if dry_run:
+                console.print("\n[cyan]DRY RUN MODE - No changes will be made[/cyan]")
+                handle_recovery_scenario(source_path, destination_path, dry_run=True)
+                raise typer.Exit(0)
+            
+            # Confirmation
+            if not force:
+                if not typer.confirm("\nProceed with recovery operation?"):
+                    console.print("[yellow]Operation cancelled[/yellow]")
+                    raise typer.Exit(0)
+            
+            # Execute recovery
+            console.print()
+            success = handle_recovery_scenario(source_path, destination_path, dry_run=False)
+            
+            if success:
+                console.print(Panel(
+                    "[bold green]✨ Recovery successful![/bold green]\n"
+                    "[dim]Claude project has been updated to match the renamed directory[/dim]",
+                    border_style="green",
+                    box=box.DOUBLE
+                ))
+            else:
+                console.print(Panel(
+                    "[red]⚠️  Recovery failed[/red]\n"
+                    "[dim]Check the error messages above for details[/dim]",
+                    border_style="red",
+                    box=box.DOUBLE
+                ))
+            
+            raise typer.Exit(0 if success else 1)
+        else:
+            console.print(f"[red]Error: Source directory not found and destination is not a valid recovery target[/red]")
+            console.print(f"[dim]Source: {source_path}[/dim]")
+            console.print(f"[dim]Destination: {destination_path}[/dim]")
+            raise typer.Exit(1)
+    
+    # Validate source (normal scenario)
     if not os.path.exists(source_path):
         console.print(f"[red]Error: Source path does not exist: {source_path}[/red]")
         raise typer.Exit(1)
